@@ -1,0 +1,1 @@
+Example AWS SAM with Private Subnet and REGIONAL custom domain

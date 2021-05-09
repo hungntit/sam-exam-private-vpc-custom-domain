@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sam-app
+
+  Sample SAM Template for sam-app
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+Parameters:
+  HostName:
+    Type: String
+  ZoneName:
+    Type: String
+  RegionalCertificateArn:
+    Type: String
+Mappings:
+  ApiGatewayHostingZoneMap:
+    us-east-1:
+      ApiGatewayHostingZone: "Z1UJRXOUMOOFQ8"
+      ApiGatewayHostingEndpoint: "execute-api.us-east-1.amazonaws.com"
+    us-east-2:
+      ApiGatewayHostingZone: "ZOJJZC49E0EPZ"
+      ApiGatewayHostingEndpoint: "execute-api.us-east-2.amazonaws.com"
+    us-west-1:
+      ApiGatewayHostingZone: "Z2MUQ32089INYE"
+      ApiGatewayHostingEndpoint: "execute-api.us-west-1.amazonaws.com"
+    us-west-2:
+      ApiGatewayHostingZone: "Z2OJLYMUO9EFXC"
+      ApiGatewayHostingEndpoint: "execute-api.us-west-2.amazonaws.com"
+    ca-central-1:
+      ApiGatewayHostingZone: "Z19DQILCV0OWEC"
+      ApiGatewayHostingEndpoint: "execute-api.ca-central-1.amazonaws.com"
+    ap-south-1:
+      ApiGatewayHostingZone: "Z3VO1THU9YC4UR"
+      ApiGatewayHostingEndpoint: "execute-api.ap-south-1.amazonaws.com"
+    ap-northeast-1:
+      ApiGatewayHostingZone: "Z1YSHQZHG15GKL"
+      ApiGatewayHostingEndpoint: "execute-api.ap-northeast-1.amazonaws.com"
+    ap-northeast-2:
+      ApiGatewayHostingZone: "Z20JF4UZKIW1U8"
+      ApiGatewayHostingEndpoint: "execute-api.ap-northeast-2.amazonaws.com"
+    ap-southeast-1:
+      ApiGatewayHostingZone: "ZL327KTPIQFUL"
+      ApiGatewayHostingEndpoint: "execute-api.ap-southeast-1.amazonaws.com"
+    ap-southeast-2:
+      ApiGatewayHostingZone: "Z2RPCDW04V8134"
+      ApiGatewayHostingEndpoint: "execute-api.ap-southeast-2.amazonaws.com"
+    eu-central-1:
+      ApiGatewayHostingZone: "Z1U9ULNL0V5AJ3"
+      ApiGatewayHostingEndpoint: "execute-api.eu-central-1.amazonaws.com"
+    eu-west-1:
+      ApiGatewayHostingZone: "ZLY8HYME6SFDD"
+      ApiGatewayHostingEndpoint: "execute-api.eu-west-1.amazonaws.com"
+    eu-west-2:
+      ApiGatewayHostingZone: "ZJ5UAJN8Y3Z2Q"
+      ApiGatewayHostingEndpoint: "execute-api.eu-west-2.amazonaws.com"
+    sa-east-1:
+      ApiGatewayHostingZone: "ZCMLWB8V5SYIT"
+      ApiGatewayHostingEndpoint: "execute-api.sa-east-1.amazonaws.com"
+
+Resources:
+  # First, a VPC:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:  !Join ['', [!Ref "AWS::StackName", "-VPC" ]]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.50.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs ]    # Get the first AZ in the list 
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Private-A
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to client host
+      VpcId:
+         Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+  PublicApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: PublicApi
+      StageName: ApiStage
+      EndpointConfiguration: REGIONAL
+
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: hello_world/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        HelloWorld:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            RestApiId:
+              Ref: PublicApi
+            Path: /hello
+            Method: get
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt LambdaSecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+  DomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      RegionalCertificateArn: !Ref RegionalCertificateArn
+      DomainName: !Sub "${HostName}.${ZoneName}"
+      SecurityPolicy: TLS_1_2
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+  
+  EndpointDns:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${ZoneName}."
+      Comment: DNS for feature
+      Name: !Sub "${HostName}.${ZoneName}."
+      Type: A
+      AliasTarget:
+        DNSName:
+              Fn::GetAtt:
+                - DomainName
+                - RegionalDomainName
+        HostedZoneId: !FindInMap [ ApiGatewayHostingZoneMap, !Ref "AWS::Region", "ApiGatewayHostingZone" ]
+
+  UrlMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    DependsOn:
+      - PublicApi
+    Properties:
+      DomainName:
+        Ref: DomainName
+      RestApiId:
+        Ref: PublicApi
+      Stage: ApiStage
+  ## TODO create another SG of elasticsearch, allow the !Ref LambdaSecurityGroup
+  ## TOD Put your Elasticseasrch Resource in private subnet here with same VPC
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldApi:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${HostName}.${ZoneName}/hello/"
+  HelloWorldFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt HelloWorldFunctionRole.Arn
